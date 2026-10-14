@@ -1,0 +1,172 @@
+import time
+from collections import deque
+
+N = 8
+
+
+def is_safe(board, row, col):
+    """board[r] = column of queen in row r (rows 0..row-1 are filled)."""
+    for r in range(row):
+        c = board[r]
+        if c == col or abs(c - col) == row - r:
+            return False
+    return True
+
+
+# ---------- 1. Uninformed search: BFS ----------
+def solve_bfs(n=N):
+    solutions, nodes = [], 0
+    queue = deque([[]])
+    while queue:
+        state = queue.popleft()
+        nodes += 1
+        row = len(state)
+        if row == n:
+            solutions.append(state)
+            continue
+        for col in range(n):
+            if is_safe(state, row, col):
+                queue.append(state + [col])
+    return solutions, nodes
+
+
+# ---------- 2. Uninformed search: DFS (explicit stack) ----------
+def solve_dfs(n=N):
+    solutions, nodes = [], 0
+    stack = [[]]
+    while stack:
+        state = stack.pop()
+        nodes += 1
+        row = len(state)
+        if row == n:
+            solutions.append(state)
+            continue
+        for col in reversed(range(n)):
+            if is_safe(state, row, col):
+                stack.append(state + [col])
+    return solutions, nodes
+
+
+# ---------- 3. Backtracking ----------
+def solve_backtracking(n=N):
+    solutions, nodes = [], [0]
+    board = [-1] * n
+
+    def place(row):
+        nodes[0] += 1
+        if row == n:
+            solutions.append(board[:])
+            return
+        for col in range(n):
+            if is_safe(board, row, col):
+                board[row] = col
+                place(row + 1)
+                board[row] = -1
+
+    place(0)
+    return solutions, nodes[0]
+
+
+# ---------- 4. CSP: Backtracking + Forward Checking + MRV ----------
+def solve_csp_fc_mrv(n=N, first_only=False):
+    """Variables: one per row. Domain: columns 0..n-1.
+    Constraints: no two queens share a column or a diagonal."""
+    solutions, nodes = [], [0]
+    domains = {r: set(range(n)) for r in range(n)}
+    assign = {}
+
+    def conflicts(r1, c1, r2, c2):
+        return c1 == c2 or abs(c1 - c2) == abs(r1 - r2)
+
+    def search(domains):
+        nodes[0] += 1
+        if len(assign) == n:
+            solutions.append([assign[r] for r in range(n)])
+            return first_only
+        # MRV: choose unassigned variable with smallest domain
+        var = min((r for r in range(n) if r not in assign),
+                  key=lambda r: len(domains[r]))
+        for val in sorted(domains[var]):
+            # Forward checking
+            new_domains = {r: set(d) for r, d in domains.items()}
+            ok = True
+            for r in range(n):
+                if r in assign or r == var:
+                    continue
+                new_domains[r] = {c for c in new_domains[r]
+                                  if not conflicts(var, val, r, c)}
+                if not new_domains[r]:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            assign[var] = val
+            if search(new_domains):
+                return True
+            del assign[var]
+        return False
+
+    search(domains)
+    return solutions, nodes[0]
+
+
+# ---------- 5. CSP: Min-Conflicts local search ----------
+def solve_min_conflicts(n=N, max_steps=1000, seed=7):
+    import random
+    rnd = random.Random(seed)
+    board = [rnd.randrange(n) for _ in range(n)]
+
+    def conflicts(r, c):
+        return sum(1 for r2 in range(n) if r2 != r and
+                   (board[r2] == c or abs(board[r2] - c) == abs(r2 - r)))
+
+    for step in range(max_steps):
+        bad = [r for r in range(n) if conflicts(r, board[r]) > 0]
+        if not bad:
+            return board, step
+        r = rnd.choice(bad)
+        costs = [conflicts(r, c) for c in range(n)]
+        best = min(costs)
+        board[r] = rnd.choice([c for c in range(n) if costs[c] == best])
+    return None, max_steps
+
+
+def print_board(board):
+    n = len(board)
+    for r in range(n):
+        print(" ".join("Q" if board[r] == c else "." for c in range(n)))
+
+
+def timed(fn):
+    t = time.perf_counter()
+    res = fn()
+    return res, (time.perf_counter() - t) * 1000
+
+
+if __name__ == "__main__":
+    print("=" * 56)
+    print(" 8-QUEENS: SEARCH & CONSTRAINT SATISFACTION ANALYSIS")
+    print("=" * 56)
+
+    results = []
+    for name, fn in [("BFS", solve_bfs), ("DFS", solve_dfs),
+                     ("Backtracking", solve_backtracking),
+                     ("CSP (FC + MRV)", solve_csp_fc_mrv)]:
+        (sols, nodes), ms = timed(fn)
+        results.append((name, len(sols), nodes, ms))
+
+    print(f"\n{'Algorithm':<18}{'Solutions':>10}{'Nodes':>10}{'Time(ms)':>12}")
+    print("-" * 50)
+    for name, s, n, ms in results:
+        print(f"{name:<18}{s:>10}{n:>10}{ms:>12.2f}")
+
+    sols, _ = solve_backtracking()
+    print("\nFirst solution (row -> column):", [c + 1 for c in sols[0]])
+    print_board(sols[0])
+
+    (first, fn_nodes), ms = timed(lambda: solve_csp_fc_mrv(first_only=True))
+    print(f"\nCSP first-solution search: {fn_nodes} nodes, {ms:.2f} ms")
+
+    b, steps = solve_min_conflicts()
+    print(f"\nMin-Conflicts local search: solved in {steps} steps")
+    print_board(b)
